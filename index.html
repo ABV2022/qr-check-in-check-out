@@ -3,25 +3,27 @@
 <head>
   <title>Inventory Scan Portal</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script src="https://unpkg.com" type="text/javascript"></script>
+  <script src="https://cloudflare.com"></script>
   <style>
     body { font-family: -apple-system, sans-serif; margin: 20px; background-color: #f4f6f9; color: #333; text-align: center; }
     .container { max-width: 450px; margin: 0 auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: left; }
     h2 { text-align: center; color: #1a73e8; margin-top: 0; }
-    input[type="email"] { width: 100%; padding: 12px; margin: 10px 0 20px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+    input[type="email"], input[type="text"] { width: 100%; padding: 12px; margin: 8px 0 15px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
     .toggle-container { display: flex; background: #eee; border-radius: 8px; padding: 4px; margin-bottom: 20px; }
     .toggle-option { flex: 1; text-align: center; padding: 12px; font-weight: bold; border-radius: 6px; cursor: pointer; }
     .toggle-option.active { background: #1a73e8; color: white; }
     .toggle-option.active.checkin-active { background: #34a853; }
-    #reader { width: 100%; min-height: 250px; border-radius: 8px; overflow: hidden; background: #222; margin-top: 10px; }
+    #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #222; margin-top: 10px; }
     .btn { width: 100%; padding: 14px; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
     .btn-cam { background-color: #f4b400; color: #000; }
+    .btn-add { background-color: #5f6368; padding: 10px; margin-top: 0; margin-bottom: 15px; }
     .btn-submit { background-color: #1a73e8; margin-top: 20px; }
     .btn-submit:disabled { background-color: #ccc; }
-    .item-list { margin-top: 15px; padding: 0; list-style-type: none; }
+    .item-list { margin-top: 10px; padding: 0; list-style-type: none; }
     .item-tag { background: #e8f0fe; color: #1a73e8; padding: 10px 12px; margin: 5px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-weight: 500; }
     .remove-btn { color: #ea4335; font-weight: bold; cursor: pointer; padding: 0 8px; }
     #statusMessage { text-align: center; font-weight: bold; margin-top: 15px; font-size: 14px; }
+    #camError { color: #ea4335; font-size: 13px; margin-top: 8px; text-align: center; font-weight: bold; }
   </style>
 </head>
 <body>
@@ -39,7 +41,15 @@
 
   <button id="startCamBtn" class="btn btn-cam" onclick="startCamera()">📷 Tap to Start Camera</button>
   <div id="reader"></div>
-  <div id="camError" style="color: #ea4335; font-size: 13px; margin-top: 8px; text-align: center;"></div>
+  <div id="camError"></div>
+
+  <div style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px;">
+    <label for="manualItem" style="font-size: 13px; color: #666;">Or enter Item ID manually:</label>
+    <div style="display: flex; gap: 8px; margin-top: 5px;">
+      <input type="text" id="manualItem" placeholder="e.g. ITEM-101" style="margin: 0;">
+      <button class="btn btn-add" style="width: auto; margin: 0;" onclick="addManualItem()">Add</button>
+    </div>
+  </div>
   
   <h3>Scanned Items (<span id="count">0</span>)</h3>
   <ul id="itemList" class="item-list"></ul>
@@ -56,29 +66,53 @@
   function startCamera() {
     const errorBox = document.getElementById("camError");
     const camBtn = document.getElementById("startCamBtn");
-    errorBox.innerText = "Requesting camera access...";
-
-    html5QrCode = new Html5Qrcode("reader");
     
-    html5QrCode.start(
-      { facingMode: "environment" }, // Forces back camera on phones
-      { fps: 10, qrbox: { width: 220, height: 220 } },
-      (decodedText) => {
-        if (!scannedItems.includes(decodedText)) {
-          scannedItems.push(decodedText);
-          if (navigator.vibrate) navigator.vibrate(100);
-          updateUI();
-        }
-      },
-      (errorMessage) => {
-        // Ignore continuous frame-by-frame scan misses
-      }
-    ).then(() => {
-      errorBox.innerText = "";
-      camBtn.style.display = "none"; // Hide button once camera is running
-    }).catch((err) => {
-      errorBox.innerText = "Camera Error: " + err + " — Make sure you opened this in Safari or Chrome, not an in-app browser.";
-    });
+    // Check if the scanner library loaded properly
+    if (typeof Html5Qrcode === "undefined") {
+      errorBox.innerText = "Error: Scanner library failed to load. Check your internet connection.";
+      return;
+    }
+
+    // Check if the browser supports camera APIs at all
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      errorBox.innerText = "Error: Your current browser does not allow camera access. Please open this link directly in Safari or Chrome.";
+      return;
+    }
+
+    errorBox.innerText = "Requesting camera access... Look for a popup at the top or bottom of your screen.";
+
+    try {
+      html5QrCode = new Html5Qrcode("reader");
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        (decodedText) => {
+          if (!scannedItems.includes(decodedText)) {
+            scannedItems.push(decodedText);
+            if (navigator.vibrate) navigator.vibrate(100);
+            updateUI();
+          }
+        },
+        (errorMessage) => {}
+      ).then(() => {
+        errorBox.innerText = "";
+        camBtn.style.display = "none";
+      }).catch((err) => {
+        errorBox.innerText = "Camera Blocked: " + err;
+      });
+    } catch (e) {
+      errorBox.innerText = "Script Crash: " + e.message;
+    }
+  }
+
+  function addManualItem() {
+    const input = document.getElementById("manualItem");
+    const val = input.value.trim();
+    if (val && !scannedItems.includes(val)) {
+      scannedItems.push(val);
+      input.value = "";
+      updateUI();
+    }
   }
 
   function setAction(action) {
