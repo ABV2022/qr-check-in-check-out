@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Inventory Scan Portal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cloudflare.com"></script>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 20px; background-color: #f4f6f9; color: #333; text-align: center; }
+    .container { max-width: 450px; margin: 0 auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: left; }
+    h2 { text-align: center; color: #1a73e8; margin-top: 0; }
+    input[type="email"] { width: 100%; padding: 12px; margin: 10px 0 20px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+    .toggle-container { display: flex; background: #eee; border-radius: 8px; padding: 4px; margin-bottom: 20px; }
+    .toggle-option { flex: 1; text-align: center; padding: 12px; font-weight: bold; border-radius: 6px; cursor: pointer; }
+    .toggle-option.active { background: #1a73e8; color: white; }
+    .toggle-option.active.checkin-active { background: #34a853; }
+    #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; }
+    .btn { width: 100%; padding: 14px; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 15px; }
+    .btn-submit { background-color: #1a73e8; }
+    .btn-submit:disabled { background-color: #ccc; }
+    .item-list { margin-top: 20px; padding: 0; list-style-type: none; }
+    .item-tag { background: #e8f0fe; color: #1a73e8; padding: 8px 12px; margin: 5px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-weight: 500; }
+    .remove-btn { color: #ea4335; font-weight: bold; cursor: pointer; }
+    #statusMessage { text-align: center; font-weight: bold; margin-top: 15px; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h2>Inventory Portal</h2>
+  
+  <div class="toggle-container">
+    <div id="optCheckout" class="toggle-option active" onclick="setAction('Check-Out')">Check-Out</div>
+    <div id="optCheckin" class="toggle-option" onclick="setAction('Check-In')">Check-In</div>
+  </div>
+
+  <label for="email"><b>Email Address:</b></label>
+  <input type="email" id="email" placeholder="Enter your email address">
+
+  <div id="reader"></div>
+  
+  <h3>Scanned Items (<span id="count">0</span>)</h3>
+  <ul id="itemList" class="item-list"></ul>
+
+  <button id="submitBtn" class="btn btn-submit" onclick="submitData()" disabled>Complete Transaction</button>
+  <div id="statusMessage"></div>
+</div>
+
+<script>
+  let scannedItems = [];
+  let currentAction = 'Check-Out';
+  let html5QrcodeScanner;
+
+  window.addEventListener('load', () => {
+    html5QrcodeScanner = new Html5QrcodeScanner("reader", { 
+      fps: 10, 
+      qrbox: { width: 250, height: 250 },
+      supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+    });
+    html5QrcodeScanner.render((decodedText) => {
+      if (!scannedItems.includes(decodedText)) {
+        scannedItems.push(decodedText);
+        if (navigator.vibrate) navigator.vibrate(100);
+        updateUI();
+      }
+    });
+  });
+
+  function setAction(action) {
+    currentAction = action;
+    document.getElementById('optCheckout').className = action === 'Check-Out' ? 'toggle-option active' : 'toggle-option';
+    document.getElementById('optCheckin').className = action === 'Check-In' ? 'toggle-option active checkin-active' : 'toggle-option';
+    document.getElementById('submitBtn').style.backgroundColor = action === 'Check-Out' ? '#1a73e8' : '#34a853';
+  }
+
+  function removeItem(index) {
+    scannedItems.splice(index, 1);
+    updateUI();
+  }
+
+  function updateUI() {
+    const listEl = document.getElementById("itemList");
+    listEl.innerHTML = "";
+    scannedItems.forEach((item, index) => {
+      listEl.innerHTML += `<li class="item-tag">${item} <span class="remove-btn" onclick="removeItem(${index})">✕</span></li>`;
+    });
+    document.getElementById("count").innerText = scannedItems.length;
+    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(document.getElementById("email").value.trim());
+    document.getElementById("submitBtn").disabled = !(scannedItems.length > 0 && emailValid);
+  }
+
+  document.getElementById("email").addEventListener("input", updateUI);
+
+  function submitData() {
+    const email = document.getElementById("email").value.trim();
+    const statusMsg = document.getElementById("statusMessage");
+    document.getElementById("submitBtn").disabled = true;
+    statusMsg.style.color = "#333";
+    statusMsg.innerText = "Submitting data...";
+
+    const webAppUrl = "https://script.google.com/macros/s/AKfycbxgEnb1VN-Mc1FHz46pMhg5B38HyYjfc9g5NlfLGMTDPi_kaTBO10-YFfrBPIF-89IjvQ/exec";
+
+    fetch(webAppUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ email: email, action: currentAction, items: scannedItems })
+    })
+    .then(response => response.json())
+    .then(data => {
+      statusMsg.style.color = "#34a853";
+      statusMsg.innerText = "Success! Transaction recorded.";
+      scannedItems = [];
+      document.getElementById("email").value = "";
+      updateUI();
+    })
+    .catch(err => {
+      statusMsg.style.color = "#ea4335";
+      statusMsg.innerText = "Error syncing to Google Sheet.";
+      document.getElementById("submitBtn").disabled = false;
+    });
+  }
+</script>
+</body>
+</html>
