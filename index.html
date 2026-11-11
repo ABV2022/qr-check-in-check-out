@@ -3,8 +3,6 @@
 <head>
   <title>Inventory Scan Portal</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Reliable jsQR library for universal iPhone & Android scanning -->
-  <script src="https://jsdelivr.net"></script>
   <style>
     body { font-family: -apple-system, sans-serif; margin: 20px; background-color: #f4f6f9; color: #333; text-align: center; }
     .container { max-width: 450px; margin: 0 auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: left; }
@@ -15,10 +13,9 @@
     .toggle-option.active { background: #1a73e8; color: white; }
     .toggle-option.active.checkin-active { background: #34a853; }
     video { width: 100%; border-radius: 8px; background: #000; display: none; margin-top: 10px; }
-    canvas { display: none; }
     .btn { width: 100%; padding: 14px; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
     .btn-cam { background-color: #f4b400; color: #000; }
-    .btn-add { background-color: #5f6368; padding: 10px; margin: 0; }
+    .btn-add { background-color: #5f6368; padding: 12px 18px; margin: 0; }
     .btn-submit { background-color: #1a73e8; margin-top: 20px; }
     .btn-submit:disabled { background-color: #ccc; }
     .item-list { margin-top: 10px; padding: 0; list-style-type: none; }
@@ -26,6 +23,7 @@
     .remove-btn { color: #ea4335; font-weight: bold; cursor: pointer; padding: 0 8px; }
     #statusMessage { text-align: center; font-weight: bold; margin-top: 15px; font-size: 14px; }
     #camStatus { color: #5f6368; font-size: 13px; margin-top: 8px; text-align: center; font-weight: bold; }
+    .tip-box { background: #fff8e1; border-left: 4px solid #f4b400; padding: 10px; font-size: 13px; color: #555; margin-top: 12px; border-radius: 4px; display: none; }
   </style>
 </head>
 <body>
@@ -41,15 +39,17 @@
   <label for="email"><b>Email Address:</b></label>
   <input type="email" id="email" placeholder="Enter your email address">
 
-  <button id="startCamBtn" class="btn btn-cam" onclick="startUniversalScanner()">📷 Tap to Start Camera</button>
+  <button id="startCamBtn" class="btn btn-cam" onclick="startScanner()">📷 Scan QR Code</button>
   <video id="videoPreview" playsinline autoplay muted></video>
-  <canvas id="qrCanvas"></canvas>
   <div id="camStatus"></div>
+  <div id="iosTip" class="tip-box">
+    <b>iPhone Tip:</b> iOS Safari does not allow web pages to decode QR codes without external scripts. Use your iPhone's built-in Camera app or type/paste the Item ID below.
+  </div>
 
   <div style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px;">
-    <label for="manualItem" style="font-size: 13px; color: #666;">Or type Item ID manually:</label>
-    <div style="display: flex; gap: 8px; margin-top: 5px;">
-      <input type="text" id="manualItem" placeholder="e.g. ITEM-101" style="margin: 0;">
+    <label for="manualItem" style="font-size: 14px; font-weight: bold; color: #333;">Item ID:</label>
+    <div style="display: flex; gap: 8px; margin-top: 6px;">
+      <input type="text" id="manualItem" placeholder="Enter or paste Item ID" style="margin: 0;">
       <button class="btn btn-add" style="width: auto;" onclick="addManualItem()">Add</button>
     </div>
   </div>
@@ -66,16 +66,26 @@
   let currentAction = 'Check-Out';
   let scanning = false;
 
-  async function startUniversalScanner() {
+  // Automatically capture ?item=XYZ from URL if scanned via phone's native camera
+  window.addEventListener('load', () => {
+    const params = new URLSearchParams(window.location.search);
+    const urlItem = params.get('item');
+    if (urlItem && !scannedItems.includes(urlItem)) {
+      scannedItems.push(urlItem);
+      updateUI();
+    }
+  });
+
+  async function startScanner() {
     const statusBox = document.getElementById("camStatus");
     const video = document.getElementById("videoPreview");
-    const canvas = document.getElementById("qrCanvas");
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const camBtn = document.getElementById("startCamBtn");
+    const iosTip = document.getElementById("iosTip");
 
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    if (!('BarcodeDetector' in window)) {
       statusBox.style.color = "#ea4335";
-      statusBox.innerText = "Camera blocked. Please open this link directly in Safari or Chrome.";
+      statusBox.innerText = "Automatic web scanning is not supported on this browser.";
+      iosTip.style.display = "block";
       return;
     }
 
@@ -90,43 +100,35 @@
       camBtn.style.display = "none";
       statusBox.style.color = "#34a853";
       statusBox.innerText = "Camera active. Point at any QR code.";
-      scanning = true;
 
-      requestAnimationFrame(() => scanFrame(video, canvas, ctx, statusBox));
+      const barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+      scanning = true;
+      detectLoop(video, barcodeDetector, statusBox);
     } catch (err) {
       statusBox.style.color = "#ea4335";
       statusBox.innerText = "Camera Error: " + err.message;
     }
   }
 
-  function scanFrame(video, canvas, ctx, statusBox) {
+  async function detectLoop(video, detector, statusBox) {
     if (!scanning) return;
-
-    if (video.readyState === video.HAVE_ENOUGH_DATA) {
-      canvas.height = video.videoHeight;
-      canvas.width = video.videoWidth;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-      if (typeof jsQR !== "undefined") {
-        const code = jsQR(imageData.data, imageData.width, imageData.height, {
-          inversionAttempts: "dontInvert",
-        });
-
-        if (code && code.data && !scannedItems.includes(code.data)) {
-          scannedItems.push(code.data);
+    try {
+      const barcodes = await detector.detect(video);
+      for (let barcode of barcodes) {
+        let code = barcode.rawValue;
+        // If QR code contains a URL with ?item=XYZ, extract just the item ID
+        if (code.includes("?item=")) {
+          code = code.split("?item=")[1].split("&")[0];
+        }
+        if (code && !scannedItems.includes(code)) {
+          scannedItems.push(code);
           if (navigator.vibrate) navigator.vibrate(100);
-          statusBox.innerText = "Scanned: " + code.data;
+          statusBox.innerText = "Added: " + code;
           updateUI();
         }
-      } else {
-        statusBox.style.color = "#ea4335";
-        statusBox.innerText = "QR decoder blocked by network. Please use the manual box below.";
-        scanning = false;
-        return;
       }
-    }
-    requestAnimationFrame(() => scanFrame(video, canvas, ctx, statusBox));
+    } catch (e) {}
+    requestAnimationFrame(() => detectLoop(video, detector, statusBox));
   }
 
   function addManualItem() {
