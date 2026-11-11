@@ -13,8 +13,10 @@
     .toggle-option.active { background: #1a73e8; color: white; }
     .toggle-option.active.checkin-active { background: #34a853; }
     video { width: 100%; border-radius: 8px; background: #000; display: none; margin-top: 10px; }
+    canvas { display: none; }
     .btn { width: 100%; padding: 14px; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
     .btn-cam { background-color: #f4b400; color: #000; }
+    .btn-native { background-color: #34a853; color: #fff; margin-top: 8px; }
     .btn-add { background-color: #5f6368; padding: 12px 18px; margin: 0; }
     .btn-submit { background-color: #1a73e8; margin-top: 20px; }
     .btn-submit:disabled { background-color: #ccc; }
@@ -23,7 +25,6 @@
     .remove-btn { color: #ea4335; font-weight: bold; cursor: pointer; padding: 0 8px; }
     #statusMessage { text-align: center; font-weight: bold; margin-top: 15px; font-size: 14px; }
     #camStatus { color: #5f6368; font-size: 13px; margin-top: 8px; text-align: center; font-weight: bold; }
-    .tip-box { background: #fff8e1; border-left: 4px solid #f4b400; padding: 10px; font-size: 13px; color: #555; margin-top: 12px; border-radius: 4px; display: none; }
   </style>
 </head>
 <body>
@@ -37,19 +38,16 @@
   </div>
 
   <label for="email"><b>Email Address:</b></label>
-  <input type="email" id="email" placeholder="Enter your email address">
+  <input type="email" id="email" placeholder="Enter your email address" oninput="saveEmail()">
 
-  <button id="startCamBtn" class="btn btn-cam" onclick="startScanner()">📷 Scan QR Code</button>
+  <button id="startCamBtn" class="btn btn-cam" onclick="startScanner()">📷 Start Live Scanner</button>
   <video id="videoPreview" playsinline autoplay muted></video>
   <div id="camStatus"></div>
-  <div id="iosTip" class="tip-box">
-    <b>iPhone Tip:</b> iOS Safari does not allow web pages to decode QR codes without external scripts. Use your iPhone's built-in Camera app or type/paste the Item ID below.
-  </div>
 
   <div style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px;">
     <label for="manualItem" style="font-size: 14px; font-weight: bold; color: #333;">Item ID:</label>
     <div style="display: flex; gap: 8px; margin-top: 6px;">
-      <input type="text" id="manualItem" placeholder="Enter or paste Item ID" style="margin: 0;">
+      <input type="text" id="manualItem" placeholder="Enter Item ID" style="margin: 0;">
       <button class="btn btn-add" style="width: auto;" onclick="addManualItem()">Add</button>
     </div>
   </div>
@@ -62,51 +60,62 @@
 </div>
 
 <script>
-  let scannedItems = [];
-  let currentAction = 'Check-Out';
+  let scannedItems = JSON.parse(localStorage.getItem('savedItems') || '[]');
+  let currentAction = localStorage.getItem('savedAction') || 'Check-Out';
   let scanning = false;
 
-  // Automatically capture ?item=XYZ from URL if scanned via phone's native camera
+  // Restore saved session data and capture ?item=XYZ from native iPhone Camera scans
   window.addEventListener('load', () => {
+    const savedEmail = localStorage.getItem('savedEmail');
+    if (savedEmail) document.getElementById('email').value = savedEmail;
+    setAction(currentAction);
+
     const params = new URLSearchParams(window.location.search);
     const urlItem = params.get('item');
     if (urlItem && !scannedItems.includes(urlItem)) {
       scannedItems.push(urlItem);
-      updateUI();
+      saveItems();
+      // Clean URL without reloading
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
+    updateUI();
   });
+
+  function saveEmail() {
+    localStorage.setItem('savedEmail', document.getElementById('email').value.trim());
+    updateUI();
+  }
+
+  function saveItems() {
+    localStorage.setItem('savedItems', JSON.stringify(scannedItems));
+  }
 
   async function startScanner() {
     const statusBox = document.getElementById("camStatus");
     const video = document.getElementById("videoPreview");
     const camBtn = document.getElementById("startCamBtn");
-    const iosTip = document.getElementById("iosTip");
 
-    if (!('BarcodeDetector' in window)) {
-      statusBox.style.color = "#ea4335";
-      statusBox.innerText = "Automatic web scanning is not supported on this browser.";
-      iosTip.style.display = "block";
-      return;
-    }
+    if ('BarcodeDetector' in window) {
+      try {
+        statusBox.innerText = "Opening camera...";
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = stream;
+        video.style.display = "block";
+        camBtn.style.display = "none";
+        statusBox.style.color = "#34a853";
+        statusBox.innerText = "Camera active. Point at any QR code.";
 
-    try {
-      statusBox.innerText = "Opening camera...";
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: "environment" } 
-      });
-      
-      video.srcObject = stream;
-      video.style.display = "block";
-      camBtn.style.display = "none";
-      statusBox.style.color = "#34a853";
-      statusBox.innerText = "Camera active. Point at any QR code.";
-
-      const barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
-      scanning = true;
-      detectLoop(video, barcodeDetector, statusBox);
-    } catch (err) {
-      statusBox.style.color = "#ea4335";
-      statusBox.innerText = "Camera Error: " + err.message;
+        const barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+        scanning = true;
+        detectLoop(video, barcodeDetector, statusBox);
+      } catch (err) {
+        statusBox.style.color = "#ea4335";
+        statusBox.innerText = "Camera Error: " + err.message;
+      }
+    } else {
+      // iPhone Safari fallback guidance
+      statusBox.style.color = "#1a73e8";
+      statusBox.innerHTML = "On iPhone, open your built-in <b>Camera app</b> and point it at any item QR sticker—each tap automatically adds the item to your cart here!";
     }
   }
 
@@ -116,12 +125,12 @@
       const barcodes = await detector.detect(video);
       for (let barcode of barcodes) {
         let code = barcode.rawValue;
-        // If QR code contains a URL with ?item=XYZ, extract just the item ID
         if (code.includes("?item=")) {
           code = code.split("?item=")[1].split("&")[0];
         }
         if (code && !scannedItems.includes(code)) {
           scannedItems.push(code);
+          saveItems();
           if (navigator.vibrate) navigator.vibrate(100);
           statusBox.innerText = "Added: " + code;
           updateUI();
@@ -136,6 +145,7 @@
     const val = input.value.trim();
     if (val && !scannedItems.includes(val)) {
       scannedItems.push(val);
+      saveItems();
       input.value = "";
       updateUI();
     }
@@ -143,6 +153,7 @@
 
   function setAction(action) {
     currentAction = action;
+    localStorage.setItem('savedAction', action);
     document.getElementById('optCheckout').className = action === 'Check-Out' ? 'toggle-option active' : 'toggle-option';
     document.getElementById('optCheckin').className = action === 'Check-In' ? 'toggle-option active checkin-active' : 'toggle-option';
     document.getElementById('submitBtn').style.backgroundColor = action === 'Check-Out' ? '#1a73e8' : '#34a853';
@@ -150,6 +161,7 @@
 
   function removeItem(index) {
     scannedItems.splice(index, 1);
+    saveItems();
     updateUI();
   }
 
@@ -163,8 +175,6 @@
     const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(document.getElementById("email").value.trim());
     document.getElementById("submitBtn").disabled = !(scannedItems.length > 0 && emailValid);
   }
-
-  document.getElementById("email").addEventListener("input", updateUI);
 
   function submitData() {
     const email = document.getElementById("email").value.trim();
@@ -185,7 +195,7 @@
       statusMsg.style.color = "#34a853";
       statusMsg.innerText = "Success! Transaction recorded.";
       scannedItems = [];
-      document.getElementById("email").value = "";
+      localStorage.removeItem('savedItems');
       updateUI();
     })
     .catch(err => {
