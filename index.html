@@ -1,209 +1,106 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Inventory Scan Portal</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Batch QR Check-In / Out</title>
+  <script src="https://unpkg.com" type="text/javascript"></script>
   <style>
-    body { font-family: -apple-system, sans-serif; margin: 20px; background-color: #f4f6f9; color: #333; text-align: center; }
-    .container { max-width: 450px; margin: 0 auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: left; }
-    h2 { text-align: center; color: #1a73e8; margin-top: 0; }
-    input[type="email"], input[type="text"] { width: 100%; padding: 12px; margin: 8px 0 15px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
-    .toggle-container { display: flex; background: #eee; border-radius: 8px; padding: 4px; margin-bottom: 20px; }
-    .toggle-option { flex: 1; text-align: center; padding: 12px; font-weight: bold; border-radius: 6px; cursor: pointer; }
-    .toggle-option.active { background: #1a73e8; color: white; }
-    .toggle-option.active.checkin-active { background: #34a853; }
-    video { width: 100%; border-radius: 8px; background: #000; display: none; margin-top: 10px; }
-    canvas { display: none; }
-    .btn { width: 100%; padding: 14px; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; }
-    .btn-cam { background-color: #f4b400; color: #000; }
-    .btn-native { background-color: #34a853; color: #fff; margin-top: 8px; }
-    .btn-add { background-color: #5f6368; padding: 12px 18px; margin: 0; }
-    .btn-submit { background-color: #1a73e8; margin-top: 20px; }
-    .btn-submit:disabled { background-color: #ccc; }
-    .item-list { margin-top: 10px; padding: 0; list-style-type: none; }
-    .item-tag { background: #e8f0fe; color: #1a73e8; padding: 10px 12px; margin: 5px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-weight: 500; }
-    .remove-btn { color: #ea4335; font-weight: bold; cursor: pointer; padding: 0 8px; }
-    #statusMessage { text-align: center; font-weight: bold; margin-top: 15px; font-size: 14px; }
-    #camStatus { color: #5f6368; font-size: 13px; margin-top: 8px; text-align: center; font-weight: bold; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 500px; margin: auto; padding: 16px; }
+    #reader { width: 100%; margin-bottom: 12px; }
+    select, input, button { width: 100%; padding: 12px; margin: 6px 0; font-size: 16px; box-sizing: border-box; }
+    button { background: #0066cc; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
+    button.secondary { background: #555; }
+    ul { list-style: none; padding: 0; }
+    li { background: #f4f4f4; padding: 10px; margin: 4px 0; display: flex; justify-content: space-between; border-radius: 4px; }
   </style>
 </head>
 <body>
+  <h2>Inventory QR Scanner</h2>
+  <div id="reader"></div>
 
-<div class="container">
-  <h2>Inventory Portal</h2>
-  
-  <div class="toggle-container">
-    <div id="optCheckout" class="toggle-option active" onclick="setAction('Check-Out')">Check-Out</div>
-    <div id="optCheckin" class="toggle-option" onclick="setAction('Check-In')">Check-In</div>
-  </div>
+  <select id="action">
+    <option value="Check In">Check In (+)</option>
+    <option value="Check Out">Check Out (-)</option>
+  </select>
+  <input type="text" id="user" placeholder="Your Name or Location (Optional)" />
 
-  <label for="email"><b>Email Address:</b></label>
-  <input type="email" id="email" placeholder="Enter your email address" oninput="saveEmail()">
+  <h3>Scanned Queue (<span id="count">0</span>)</h3>
+  <ul id="queue"></ul>
 
-  <button id="startCamBtn" class="btn btn-cam" onclick="startScanner()">📷 Start Live Scanner</button>
-  <video id="videoPreview" playsinline autoplay muted></video>
-  <div id="camStatus"></div>
+  <button onclick="submitAll()">Submit All to Google Sheets</button>
+  <button class="secondary" onclick="clearQueue()">Clear List</button>
 
-  <div style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px;">
-    <label for="manualItem" style="font-size: 14px; font-weight: bold; color: #333;">Item ID:</label>
-    <div style="display: flex; gap: 8px; margin-top: 6px;">
-      <input type="text" id="manualItem" placeholder="Enter Item ID" style="margin: 0;">
-      <button class="btn btn-add" style="width: auto;" onclick="addManualItem()">Add</button>
-    </div>
-  </div>
-  
-  <h3>Scanned Items (<span id="count">0</span>)</h3>
-  <ul id="itemList" class="item-list"></ul>
+  <script>
+    const FORM_URL = "https://google.com";
+    const ENTRY_ITEM = "entry.436807205";
+    const ENTRY_ACTION = "entry.758189585";
+    const ENTRY_USER = "entry.644931705";
 
-  <button id="submitBtn" class="btn btn-submit" onclick="submitData()" disabled>Complete Transaction</button>
-  <div id="statusMessage"></div>
-</div>
+    let scannedItems = [];
+    let lastScanTime = 0;
 
-<script>
-  let scannedItems = JSON.parse(localStorage.getItem('savedItems') || '[]');
-  let currentAction = localStorage.getItem('savedAction') || 'Check-Out';
-  let scanning = false;
+    function onScanSuccess(decodedText) {
+      const now = Date.now();
+      // Prevent duplicate accidental reads within 1.5 seconds
+      if (now - lastScanTime < 1500 && scannedItems[scannedItems.length - 1] === decodedText) return;
+      lastScanTime = now;
 
-  // Restore saved session data and capture ?item=XYZ from native iPhone Camera scans
-  window.addEventListener('load', () => {
-    const savedEmail = localStorage.getItem('savedEmail');
-    if (savedEmail) document.getElementById('email').value = savedEmail;
-    setAction(currentAction);
-
-    const params = new URLSearchParams(window.location.search);
-    const urlItem = params.get('item');
-    if (urlItem && !scannedItems.includes(urlItem)) {
-      scannedItems.push(urlItem);
-      saveItems();
-      // Clean URL without reloading
-      window.history.replaceState({}, document.title, window.location.pathname);
+      scannedItems.push(decodedText);
+      if (navigator.vibrate) navigator.vibrate(100);
+      renderQueue();
     }
-    updateUI();
-  });
 
-  function saveEmail() {
-    localStorage.setItem('savedEmail', document.getElementById('email').value.trim());
-    updateUI();
-  }
-
-  function saveItems() {
-    localStorage.setItem('savedItems', JSON.stringify(scannedItems));
-  }
-
-  async function startScanner() {
-    const statusBox = document.getElementById("camStatus");
-    const video = document.getElementById("videoPreview");
-    const camBtn = document.getElementById("startCamBtn");
-
-    if ('BarcodeDetector' in window) {
-      try {
-        statusBox.innerText = "Opening camera...";
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        video.srcObject = stream;
-        video.style.display = "block";
-        camBtn.style.display = "none";
-        statusBox.style.color = "#34a853";
-        statusBox.innerText = "Camera active. Point at any QR code.";
-
-        const barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
-        scanning = true;
-        detectLoop(video, barcodeDetector, statusBox);
-      } catch (err) {
-        statusBox.style.color = "#ea4335";
-        statusBox.innerText = "Camera Error: " + err.message;
-      }
-    } else {
-      // iPhone Safari fallback guidance
-      statusBox.style.color = "#1a73e8";
-      statusBox.innerHTML = "On iPhone, open your built-in <b>Camera app</b> and point it at any item QR sticker—each tap automatically adds the item to your cart here!";
+    function renderQueue() {
+      const list = document.getElementById("queue");
+      list.innerHTML = "";
+      scannedItems.forEach((item, index) => {
+        const li = document.createElement("li");
+        li.innerHTML = `<span>${item}</span><span style="color:red;cursor:pointer;" onclick="removeItem(${index})">✕</span>`;
+        list.appendChild(li);
+      });
+      document.getElementById("count").innerText = scannedItems.length;
     }
-  }
 
-  async function detectLoop(video, detector, statusBox) {
-    if (!scanning) return;
-    try {
-      const barcodes = await detector.detect(video);
-      for (let barcode of barcodes) {
-        let code = barcode.rawValue;
-        if (code.includes("?item=")) {
-          code = code.split("?item=")[1].split("&")[0];
-        }
-        if (code && !scannedItems.includes(code)) {
-          scannedItems.push(code);
-          saveItems();
-          if (navigator.vibrate) navigator.vibrate(100);
-          statusBox.innerText = "Added: " + code;
-          updateUI();
-        }
-      }
-    } catch (e) {}
-    requestAnimationFrame(() => detectLoop(video, detector, statusBox));
-  }
-
-  function addManualItem() {
-    const input = document.getElementById("manualItem");
-    const val = input.value.trim();
-    if (val && !scannedItems.includes(val)) {
-      scannedItems.push(val);
-      saveItems();
-      input.value = "";
-      updateUI();
+    function removeItem(index) {
+      scannedItems.splice(index, 1);
+      renderQueue();
     }
-  }
 
-  function setAction(action) {
-    currentAction = action;
-    localStorage.setItem('savedAction', action);
-    document.getElementById('optCheckout').className = action === 'Check-Out' ? 'toggle-option active' : 'toggle-option';
-    document.getElementById('optCheckin').className = action === 'Check-In' ? 'toggle-option active checkin-active' : 'toggle-option';
-    document.getElementById('submitBtn').style.backgroundColor = action === 'Check-Out' ? '#1a73e8' : '#34a853';
-  }
-
-  function removeItem(index) {
-    scannedItems.splice(index, 1);
-    saveItems();
-    updateUI();
-  }
-
-  function updateUI() {
-    const listEl = document.getElementById("itemList");
-    listEl.innerHTML = "";
-    scannedItems.forEach((item, index) => {
-      listEl.innerHTML += `<li class="item-tag">${item} <span class="remove-btn" onclick="removeItem(${index})">✕</span></li>`;
-    });
-    document.getElementById("count").innerText = scannedItems.length;
-    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(document.getElementById("email").value.trim());
-    document.getElementById("submitBtn").disabled = !(scannedItems.length > 0 && emailValid);
-  }
-
-  function submitData() {
-    const email = document.getElementById("email").value.trim();
-    const statusMsg = document.getElementById("statusMessage");
-    document.getElementById("submitBtn").disabled = true;
-    statusMsg.style.color = "#333";
-    statusMsg.innerText = "Submitting data...";
-
-    const webAppUrl = "https://script.google.com/macros/s/AKfycbxgEnb1VN-Mc1FHz46pMhg5B38HyYjfc9g5NlfLGMTDPi_kaTBO10-YFfrBPIF-89IjvQ/exec";
-
-    fetch(webAppUrl, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify({ email: email, action: currentAction, items: scannedItems })
-    })
-    .then(response => response.json())
-    .then(data => {
-      statusMsg.style.color = "#34a853";
-      statusMsg.innerText = "Success! Transaction recorded.";
+    function clearQueue() {
       scannedItems = [];
-      localStorage.removeItem('savedItems');
-      updateUI();
-    })
-    .catch(err => {
-      statusMsg.style.color = "#ea4335";
-      statusMsg.innerText = "Error syncing to Google Sheet.";
-      document.getElementById("submitBtn").disabled = false;
-    });
-  }
-</script>
+      renderQueue();
+    }
+
+    async function submitAll() {
+      if (scannedItems.length === 0) return alert("Scan at least one QR code first.");
+      const action = document.getElementById("action").value;
+      const user = document.getElementById("user").value || "N/A";
+
+      for (const item of scannedItems) {
+        const formData = new URLSearchParams();
+        formData.append(ENTRY_ITEM, item);
+        formData.append(ENTRY_ACTION, action);
+        formData.append(ENTRY_USER, user);
+
+        await fetch(FORM_URL, {
+          method: "POST",
+          mode: "no-cors",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: formData.toString()
+        });
+      }
+
+      alert(`Successfully logged ${scannedItems.length} items!`);
+      clearQueue();
+    }
+
+    const html5QrCode = new Html5Qrcode("reader");
+    html5QrCode.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      onScanSuccess
+    );
+  </script>
 </body>
 </html>
